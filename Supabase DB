@@ -1,0 +1,160 @@
+
+Here is a comprehensive database documentation based on the schema provided.
+
+# AI-Driven CRM & Messaging Platform - Database Documentation
+
+## 1. Overview
+This schema is designed for a **Multi-Tenant CRM** system heavily integrated with **Generative AI** agents. It handles customer communications across multiple platforms (WhatsApp, Instagram, etc.), manages lead lifecycles, and stores configuration and audit logs for AI agents.
+
+**Key Features:**
+*   **Multi-Tenancy:** Data isolation via `tenant_id`.
+*   **AI & RAG:** Vector embeddings, system prompts, and AI reasoning logs.
+*   **Human Handoff:** Logic to switch control between AI agents and human support (`human_in_control`).
+*   **Omnichannel:** Support for WhatsApp, Instagram, Facebook, VoIP, and Email.
+
+---
+
+## 2. Core Entities & Multi-Tenancy
+
+### `tenants`
+The root entity representing a business or organization using the platform.
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | UUID (PK) | Unique identifier for the tenant. |
+| **business_name** | Text | The display name of the business. |
+| **working_hours** | JSONB | Business operating hours. <br> *Default:* `{"end": "17:00", "start": "09:00", "timezone": "UTC"}` |
+| **created_at** | Timestamptz | Timestamp of creation. |
+
+### `app_users`
+Internal users (agents, admins, managers) belonging to a tenant.
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | UUID (PK) | Unique identifier for the user. |
+| **tenant_id** | UUID (FK) | Links to `tenants`. |
+| **full_name** | Text | User's real name. |
+| **email** | Text | Login email (Unique). |
+| **user_role** | Text | Permission level (e.g., `'agent'`). |
+
+### `tenant_channels`
+Stores API credentials for external communication platforms.
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | UUID (PK) | Unique identifier. |
+| **tenant_id** | UUID (FK) | Links to `tenants`. |
+| **channel_name** | Text | Platform type. **Values:** `whatsapp`, `instagram`, `facebook`. |
+| **provider_id** | Text | External ID (e.g., WhatsApp Phone Number ID). |
+| **access_token** | Text | API Token for authentication. |
+
+---
+
+## 3. Customer Data & Leads
+
+### `contacts`
+Represents an external customer or lead. This is the central entity for communication.
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | UUID (PK) | Unique identifier. |
+| **tenant_id** | UUID (FK) | Links to `tenants`. |
+| **owner_id** | UUID (FK) | The internal `app_user` responsible for this lead. |
+| **external_id** | Text | ID from the platform (e.g., Phone number or Instagram User ID). |
+| **platform_name** | Text | Source of the contact. **Values:** `whatsapp`, `instagram`, `facebook`, `voip`, `email`. |
+| **human_in_control**| Boolean | **Critical Logic:** If `true`, AI is paused and a human must reply. |
+| **lead_status** | Text | Lifecycle stage. Default: `'new'`. |
+| **lead_score** | Integer | Heuristic score (0-100) indicating likelihood to convert. |
+| **ai_summary** | Text | An auto-generated summary of the conversation history. |
+| **unread_count** | Integer | Number of messages not yet viewed by the business. |
+| **pipeline_value** | Numeric | Estimated monetary value of the lead. |
+
+---
+
+## 4. Messaging & Communication
+
+### `messages`
+The conversation history between the Contact and the Business (AI or Human).
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | UUID (PK) | Unique identifier. |
+| **contact_id** | UUID (FK) | Links to `contacts`. |
+| **participant_role**| Text | Who sent the message. **Values:** `'customer'`, `'ai'`, `'human'`. |
+| **content** | Text | The text body of the message. |
+| **ai_reasoning** | Text | Internal "thought process" or chain-of-thought of the AI before sending. |
+| **message_category**| Text | Type of message (e.g., `'text'`, `'image'`). |
+| **sentiment_score_val** | Integer | Sentiment analysis result (e.g., -100 to +100). |
+| **platform_msg_id** | Text | Unique ID assigned by the external provider (for threading/deduplication). |
+
+---
+
+## 5. AI Configuration & RAG
+
+### `agent_configs`
+Defines the persona and rules for different AI agents within a tenant.
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | UUID (PK) | Unique identifier. |
+| **tenant_id** | UUID (FK) | Links to `tenants`. |
+| **agent_label** | Text | The specific agent role. **Values:** `'presale'`, `'followup'`, `'scorer'`, `'qualifier'`. |
+| **system_prompt** | Text | The base instructions (Prompt Engineering) for the LLM. |
+
+### `knowledge_base`
+Stores documents and vector embeddings for RAG (Retrieval-Augmented Generation), allowing the AI to answer business-specific questions.
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | UUID (PK) | Unique identifier. |
+| **content** | Text | The raw text chunk used for context. |
+| **embedding** | USER-DEFINED| Vector representation of the content (requires `pgvector` extension). |
+| **agent_label** | Text | Which agent has access to this knowledge. |
+| **metadata** | JSONB | Extra attributes (source URL, page number, etc.). |
+
+---
+
+## 6. Audit & Analytics
+
+### `agent_activity`
+An audit log of background tasks or decisions made by the AI.
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **id** | UUID (PK) | Unique identifier. |
+| **contact_id** | UUID (FK) | Links to the contact involved. |
+| **activity_status** | Text | Outcome. **Values:** `'success'`, `'info'`, `'warning'`, `'error'`. |
+| **task_category** | Text | The type of job (e.g., "Lead Scoring", "Auto-Reply"). |
+| **ai_logic_trace** | Text | Full debug trace of the AI's execution path. |
+
+### `daily_metrics`
+Aggregated data for dashboard reporting.
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| **snapshot_date** | Date | The date of the report. |
+| **total_pipeline_val**| Numeric | Sum of pipeline value for that day. |
+| **median_conv_time**| Interval | Average time taken to convert a lead. |
+
+---
+
+## 7. Entity Relationship Diagram (Textual Representation)
+
+*   **Tenants** (1) ────< (N) **App Users**
+*   **Tenants** (1) ────< (N) **Contacts**
+*   **Tenants** (1) ────< (N) **Tenant Channels**
+*   **Tenants** (1) ────< (N) **Agent Configs**
+*   **Contacts** (1) ────< (N) **Messages**
+*   **Contacts** (1) ────< (N) **Agent Activity**
+*   **App Users** (1) ────< (N) **Contacts** (as Owner)
+
+## 8. Important Constraints & Enums
+
+### Lead Sources (`platform_name`)
+*   `whatsapp`
+*   `instagram`
+*   `facebook`
+*   `voip`
+*   `email`
+
+### AI Agent Roles (`agent_label`)
+*   `presale`: Handles initial inquiries.
+*   `followup`: Re-engages cold leads.
+*   `scorer`: Analyzes chats to update `lead_score`.
+*   `qualifier`: Determines if a lead matches ideal customer profile.
+
+### Message Participants (`participant_role`)
+*   `customer`: The external user.
+*   `ai`: The automated bot response.
+*   `human`: An `app_user` manually replying.
